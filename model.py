@@ -1,5 +1,6 @@
 import pickle
 import random
+import numpy as np
 import torch
 import torch.autograd as autograd
 import torch.utils.data as data
@@ -15,21 +16,32 @@ class AnswerSelection(nn.Module):
         self.embedding_dim = conf['embedding_dim']
         self.question_len = conf['question_len']
         self.answer_len = conf['answer_len']
+	self.batch_size = conf['batch_size']
 
         self.word_embeddings = nn.Embedding(self.vocab_size, self.embedding_dim)
-        self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim / 2, num_layers=1, bidirectional=True)
-        self.cnns = [nn.Conv1d(256, 500, filter_size, stride=1, padding=filter_size-(i+1)) for i, filter_size in enumerate([1,3,5])]
+        self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim // 2, num_layers=1, bidirectional=True, batch_first=True)
+        self.cnns = nn.ModuleList([nn.Conv1d(self.hidden_dim, 500, filter_size, stride=1, padding=filter_size-(i+1)) for i, filter_size in enumerate([1,3,5])])
         self.question_maxpool = nn.MaxPool1d(self.question_len, stride=1)
         self.answer_maxpool = nn.MaxPool1d(self.answer_len, stride=1)
         self.dropout = nn.Dropout(p=0.2)
+	self.init_weights()
+	self.hidden = self.init_hidden(self.batch_size)
 
+    def init_hidden(self, batch_len):
+        return (autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)).cuda(),
+                autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)).cuda())
+
+    def init_weights(self):
+        initrange = 0.1
+        self.word_embeddings.weight.data.uniform_(-initrange, initrange)
+        
     def forward(self, question, answer):
         question_embedding = self.word_embeddings(question)
         answer_embedding = self.word_embeddings(answer)
-
-        q_lstm,_ = self.lstm(question_embedding)
-        a_lstm,_ = self.lstm(answer_embedding)
-
+        q_lstm, self.hidden = self.lstm(question_embedding, self.hidden)
+        a_lstm, self.hidden = self.lstm(answer_embedding, self.hidden)
+	q_lstm = q_lstm.contiguous()
+	a_lstm = a_lstm.contiguous()
         q_lstm = q_lstm.view(-1,self.hidden_dim, self.question_len)
         a_lstm = a_lstm.view(-1,self.hidden_dim, self.answer_len)
 
@@ -71,6 +83,7 @@ class Evaluate():
         self.vocab = self.load('vocabulary')
         self.conf['vocab_size'] = len(self.vocab) + 1
         self.model = AnswerSelection(self.conf)
+	self.model.cuda()
 
     def load(self, name):
         return pickle.load(open('insurance_qa_python/'+name))
@@ -91,13 +104,11 @@ class Evaluate():
             elif len(item) < max_length:
                 data[i] += [0] * (max_length - len(item))
         return data
-
+	
     def train(self):
         batch_size = self.conf['batch_size']
         epochs = self.conf['epochs']
         training_set = self.load('train')
-
-        total_loss = 0.0
 
         questions = list()
         good_answers = list()
@@ -114,26 +125,30 @@ class Evaluate():
         for i in xrange(epochs):
             bad_answers = torch.LongTensor(self.pad_answer(random.sample(self.answers.values(), len(good_answers))))
             train_loader = data.DataLoader(dataset=torch.cat([questions,good_answers,bad_answers],dim=1), batch_size=batch_size)
+	    avg_loss = []
+	    self.model.train()
             for step, train in enumerate(train_loader):
-                batch_question = autograd.Variable(train[:,:self.conf['question_len']])
-                batch_good_answer = autograd.Variable(train[:,self.conf['question_len']:self.conf['question_len']+self.conf['answer_len']])
-                batch_bad_answer = autograd.Variable(train[:,self.conf['question_len']+self.conf['answer_len']:])
-
-                loss = self.model.fit(batch_question, batch_good_answer, batch_bad_answer)
-                print "Epoch: {0} Step: {1} out of {2} -- Current loss: {3}".format(str(i), str(step), str(len(train_loader)), str(loss.data[0]))
+                batch_question = autograd.Variable(train[:,:self.conf['question_len']]).cuda()
+                batch_good_answer = autograd.Variable(train[:,self.conf['question_len']:self.conf['question_len']+self.conf['answer_len']]).cuda()
+                batch_bad_answer = autograd.Variable(train[:,self.conf['question_len']+self.conf['answer_len']:]).cuda()
                 optimizer.zero_grad()
+		self.model.hidden = self.model.init_hidden(len(train))
+		loss = self.model.fit(batch_question, batch_good_answer, batch_bad_answer)
+		avg_loss.append(loss.data[0])
                 loss.backward()
+	        torch.nn.utils.clip_grad_norm(self.model.parameters(), 0.25)
                 optimizer.step()
+	    print "Epoch: {0} Epoch Average loss: {1}".format(str(i), str(np.mean(avg_loss)))
             torch.save(self.model, "saved_model/answer_selection_model")
 
 conf = {
     'question_len':20,
     'answer_len':150,
     'batch_size':100,
-    'epochs':10,
+    'epochs':10000,
     'embedding_dim':256,
     'hidden_dim':256,
-    'learning_rate':0.001,
+    'learning_rate':0.01,
     'margin':0.05
 }
 ev = Evaluate(conf)
