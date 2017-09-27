@@ -16,7 +16,8 @@ class AnswerSelection(nn.Module):
         self.embedding_dim = conf['embedding_dim']
         self.question_len = conf['question_len']
         self.answer_len = conf['answer_len']
-	self.batch_size = conf['batch_size']
+        self.batch_size = conf['batch_size']
+        self.gpu_flag = conf['gpu']
 
         self.word_embeddings = nn.Embedding(self.vocab_size, self.embedding_dim)
         self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim // 2, num_layers=1, bidirectional=True, batch_first=True)
@@ -28,13 +29,17 @@ class AnswerSelection(nn.Module):
 	self.hidden = self.init_hidden(self.batch_size)
 
     def init_hidden(self, batch_len):
-        return (autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)).cuda(),
+        if self.gpu_flag:
+            return (autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)).cuda(),
                 autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)).cuda())
+        else:
+            return (autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)),
+                autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)))
 
     def init_weights(self):
         initrange = 0.1
         self.word_embeddings.weight.data.uniform_(-initrange, initrange)
-        
+
     def forward(self, question, answer):
         question_embedding = self.word_embeddings(question)
         answer_embedding = self.word_embeddings(answer)
@@ -72,22 +77,28 @@ class AnswerSelection(nn.Module):
         good_similarity = self.forward(questions, good_answers)
         bad_similarity = self.forward(questions, bad_answers)
 
-	zeros = autograd.Variable(torch.zeros(good_similarity.size()[0]), requires_grad=False).cuda()
-	margin = autograd.Variable(torch.linspace(0.05,0.05,good_similarity.size()[0]), requires_grad=False).cuda()
-	loss = torch.max(zeros, autograd.Variable.sub(margin, autograd.Variable.sub(bad_similarity, good_similarity)))
+        if self.gpu_flag:
+        	zeros = autograd.Variable(torch.zeros(good_similarity.size()[0]), requires_grad=False).cuda()
+        	margin = autograd.Variable(torch.linspace(0.05,0.05,good_similarity.size()[0]), requires_grad=False).cuda()
+        else:
+            zeros = autograd.Variable(torch.zeros(good_similarity.size()[0]), requires_grad=False)
+            margin = autograd.Variable(torch.linspace(0.05,0.05,good_similarity.size()[0]), requires_grad=False)
+
+    	loss = torch.max(zeros, autograd.Variable.sub(margin, autograd.Variable.sub(bad_similarity, good_similarity)))
         #similarity = torch.stack([good_similarity,bad_similarity],dim=1)
         #loss = torch.squeeze(torch.stack(map(lambda x: F.relu(0.05 - x[0] + x[1]), similarity), dim=0))
-	accuracy = torch.eq(loss,zeros).type(torch.DoubleTensor).mean()
+        accuracy = torch.eq(loss,zeros).type(torch.DoubleTensor).mean()
         return loss.sum(), accuracy.data[0]
 
 class Evaluate():
     def __init__(self, conf):
         self.conf = conf
-        self.answers = self.load('answers')
+        self.all_answers = self.load('answers')
         self.vocab = self.load('vocabulary')
         self.conf['vocab_size'] = len(self.vocab) + 1
         self.model = AnswerSelection(self.conf)
-	self.model.cuda()
+        if conf['gpu']:
+	           self.model.cuda()
 
     def load(self, name):
         return pickle.load(open('insurance_qa_python/'+name))
@@ -108,7 +119,7 @@ class Evaluate():
             elif len(item) < max_length:
                 data[i] += [0] * (max_length - len(item))
         return data
-	
+
     def train(self):
         batch_size = self.conf['batch_size']
         epochs = self.conf['epochs']
@@ -116,26 +127,29 @@ class Evaluate():
 
         questions = list()
         good_answers = list()
-        indices = list()
         for i, q in enumerate(training_set):
             questions += [q['question']] * len(q['answers'])
-            good_answers += [self.answers[j] for j in q['answers']]
-            indices += [i] * len(q['answers'])
+            good_answers += [self.all_answers[j] for j in q['answers']]
 
         questions = torch.LongTensor(self.pad_question(questions))
         good_answers = torch.LongTensor(self.pad_answer(good_answers))
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.conf['learning_rate'])
 
         for i in xrange(epochs):
-            bad_answers = torch.LongTensor(self.pad_answer(random.sample(self.answers.values(), len(good_answers))))
+            bad_answers = torch.LongTensor(self.pad_answer(random.sample(self.all_answers.values(), len(good_answers))))
             train_loader = data.DataLoader(dataset=torch.cat([questions,good_answers,bad_answers],dim=1), batch_size=batch_size)
 	    avg_loss = []
 	    avg_acc = []
 	    self.model.train()
             for step, train in enumerate(train_loader):
-                batch_question = autograd.Variable(train[:,:self.conf['question_len']]).cuda()
-                batch_good_answer = autograd.Variable(train[:,self.conf['question_len']:self.conf['question_len']+self.conf['answer_len']]).cuda()
-                batch_bad_answer = autograd.Variable(train[:,self.conf['question_len']+self.conf['answer_len']:]).cuda()
+                if self.conf['gpu']:
+                    batch_question = autograd.Variable(train[:,:self.conf['question_len']]).cuda()
+                    batch_good_answer = autograd.Variable(train[:,self.conf['question_len']:self.conf['question_len']+self.conf['answer_len']]).cuda()
+                    batch_bad_answer = autograd.Variable(train[:,self.conf['question_len']+self.conf['answer_len']:]).cuda()
+                else:
+                    batch_question = autograd.Variable(train[:,:self.conf['question_len']])
+                    batch_good_answer = autograd.Variable(train[:,self.conf['question_len']:self.conf['question_len']+self.conf['answer_len']])
+                    batch_bad_answer = autograd.Variable(train[:,self.conf['question_len']+self.conf['answer_len']:])
                 optimizer.zero_grad()
 		self.model.hidden = self.model.init_hidden(len(train))
 		loss, acc = self.model.fit(batch_question, batch_good_answer, batch_bad_answer)
@@ -144,11 +158,28 @@ class Evaluate():
                 loss.backward()
 	        torch.nn.utils.clip_grad_norm(self.model.parameters(), 0.25)
                 optimizer.step()
-	    #for i in self.model.parameters():
-	    #	print i
-	    
+
 	    print "Epoch: {0} Epoch Average loss: {1} Accuracy {2}".format(str(i), str(np.mean(avg_loss)), str(np.mean(avg_acc)))
-            torch.save(self.model, "saved_model/answer_selection_model")
+            torch.save(self.model.state_dict(), "saved_model/answer_selection_model")
+
+    def get_eval_sets(self):
+        return dict([(s, self.load(s)) for s in ['dev', 'test1', 'test2']])
+
+    def evaluate(self):
+        #self.model.load_state_dict(torch.load("saved_model/answer_selection_model"))
+        self.model = torch.load("saved_model/answer_selection_model")
+        self.model.eval()
+        eval_datasets = get_eval_sets()
+        for name, dataset in eval_datasets.iteritems():
+            print "Now evaluating : " + name
+            for i, d in enumerate(dataset):
+                indices = d['good'] + d['bad']
+                answers = self.pad_answer([self.all_answers[i] for i in indices])
+                question = self.pad_question([d['question']]*len(indices))
+                similarity = self.model.forward(question,answers)
+                print similarity.size()
+                break
+            break
 
 conf = {
     'question_len':20,
@@ -158,7 +189,9 @@ conf = {
     'embedding_dim':256,
     'hidden_dim':256,
     'learning_rate':0.005,
-    'margin':0.05
+    'margin':0.05,
+    'gpu':1
 }
 ev = Evaluate(conf)
-ev.train()
+#ev.train()
+ev.evaluate()
