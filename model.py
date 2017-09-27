@@ -72,9 +72,13 @@ class AnswerSelection(nn.Module):
         good_similarity = self.forward(questions, good_answers)
         bad_similarity = self.forward(questions, bad_answers)
 
-        similarity = torch.stack([good_similarity,bad_similarity],dim=1)
-        loss = torch.stack(map(lambda x: F.relu(0.05 - x[0] + x[1]),similarity), dim=0)
-        return torch.squeeze(loss).sum()
+	zeros = autograd.Variable(torch.zeros(good_similarity.size()[0]), requires_grad=False).cuda()
+	margin = autograd.Variable(torch.linspace(0.05,0.05,good_similarity.size()[0]), requires_grad=False).cuda()
+	loss = torch.max(zeros, autograd.Variable.sub(margin, autograd.Variable.sub(bad_similarity, good_similarity)))
+        #similarity = torch.stack([good_similarity,bad_similarity],dim=1)
+        #loss = torch.squeeze(torch.stack(map(lambda x: F.relu(0.05 - x[0] + x[1]), similarity), dim=0))
+	accuracy = torch.eq(loss,zeros).type(torch.DoubleTensor).mean()
+        return loss.sum(), accuracy.data[0]
 
 class Evaluate():
     def __init__(self, conf):
@@ -126,6 +130,7 @@ class Evaluate():
             bad_answers = torch.LongTensor(self.pad_answer(random.sample(self.answers.values(), len(good_answers))))
             train_loader = data.DataLoader(dataset=torch.cat([questions,good_answers,bad_answers],dim=1), batch_size=batch_size)
 	    avg_loss = []
+	    avg_acc = []
 	    self.model.train()
             for step, train in enumerate(train_loader):
                 batch_question = autograd.Variable(train[:,:self.conf['question_len']]).cuda()
@@ -133,22 +138,26 @@ class Evaluate():
                 batch_bad_answer = autograd.Variable(train[:,self.conf['question_len']+self.conf['answer_len']:]).cuda()
                 optimizer.zero_grad()
 		self.model.hidden = self.model.init_hidden(len(train))
-		loss = self.model.fit(batch_question, batch_good_answer, batch_bad_answer)
+		loss, acc = self.model.fit(batch_question, batch_good_answer, batch_bad_answer)
 		avg_loss.append(loss.data[0])
+		avg_acc.append(acc)
                 loss.backward()
 	        torch.nn.utils.clip_grad_norm(self.model.parameters(), 0.25)
                 optimizer.step()
-	    print "Epoch: {0} Epoch Average loss: {1}".format(str(i), str(np.mean(avg_loss)))
+	    #for i in self.model.parameters():
+	    #	print i
+	    
+	    print "Epoch: {0} Epoch Average loss: {1} Accuracy {2}".format(str(i), str(np.mean(avg_loss)), str(np.mean(avg_acc)))
             torch.save(self.model, "saved_model/answer_selection_model")
 
 conf = {
     'question_len':20,
     'answer_len':150,
-    'batch_size':100,
+    'batch_size':256,
     'epochs':10000,
     'embedding_dim':256,
     'hidden_dim':256,
-    'learning_rate':0.01,
+    'learning_rate':0.005,
     'margin':0.05
 }
 ev = Evaluate(conf)
