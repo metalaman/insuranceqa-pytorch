@@ -169,13 +169,14 @@ class Evaluate():
         #self.model.load_state_dict(torch.load("saved_model/answer_selection_model"))
         self.model = torch.load("saved_model/answer_selection_model")
         self.model.eval()
-        eval_datasets = get_eval_sets()
+        eval_datasets = self.get_eval_sets()
         for name, dataset in eval_datasets.iteritems():
             print "Now evaluating : " + name
             for i, d in enumerate(dataset):
                 indices = d['good'] + d['bad']
                 answers = self.pad_answer([self.all_answers[i] for i in indices])
                 question = self.pad_question([d['question']]*len(indices))
+		print question.size(), answers.size()
                 similarity = self.model.forward(question,answers)
                 print similarity.size()
                 break
