@@ -17,7 +17,6 @@ class AnswerSelection(nn.Module):
         self.question_len = conf['question_len']
         self.answer_len = conf['answer_len']
         self.batch_size = conf['batch_size']
-        self.gpu_flag = conf['gpu']
 
         self.word_embeddings = nn.Embedding(self.vocab_size, self.embedding_dim)
         self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim // 2, num_layers=1, bidirectional=True, batch_first=True)
@@ -29,12 +28,8 @@ class AnswerSelection(nn.Module):
 	self.hidden = self.init_hidden(self.batch_size)
 
     def init_hidden(self, batch_len):
-        if self.gpu_flag:
-            return (autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)).cuda(),
+        return (autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)).cuda(),
                 autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)).cuda())
-        else:
-            return (autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)),
-                autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)))
 
     def init_weights(self):
         initrange = 0.1
@@ -77,12 +72,8 @@ class AnswerSelection(nn.Module):
         good_similarity = self.forward(questions, good_answers)
         bad_similarity = self.forward(questions, bad_answers)
 
-        if self.gpu_flag:
-        	zeros = autograd.Variable(torch.zeros(good_similarity.size()[0]), requires_grad=False).cuda()
-        	margin = autograd.Variable(torch.linspace(0.05,0.05,good_similarity.size()[0]), requires_grad=False).cuda()
-        else:
-            zeros = autograd.Variable(torch.zeros(good_similarity.size()[0]), requires_grad=False)
-            margin = autograd.Variable(torch.linspace(0.05,0.05,good_similarity.size()[0]), requires_grad=False)
+        zeros = autograd.Variable(torch.zeros(good_similarity.size()[0]), requires_grad=False).cuda()
+        margin = autograd.Variable(torch.linspace(0.05,0.05,good_similarity.size()[0]), requires_grad=False).cuda()
 
     	loss = torch.max(zeros, autograd.Variable.sub(margin, autograd.Variable.sub(bad_similarity, good_similarity)))
         #similarity = torch.stack([good_similarity,bad_similarity],dim=1)
@@ -98,6 +89,7 @@ class Evaluate():
         self.conf['vocab_size'] = len(self.vocab) + 1
 	if conf['mode'] == 'train':
 	    self.model = AnswerSelection(self.conf)
+        self.model.cuda()
 	    self.model.train()
 	if conf['mode'] == 'test':
 	    self.validate()
@@ -144,14 +136,10 @@ class Evaluate():
 	    avg_acc = []
 	    self.model.train()
             for step, train in enumerate(train_loader):
-                if self.conf['gpu']:
-                    batch_question = autograd.Variable(train[:,:self.conf['question_len']]).cuda()
-                    batch_good_answer = autograd.Variable(train[:,self.conf['question_len']:self.conf['question_len']+self.conf['answer_len']]).cuda()
-                    batch_bad_answer = autograd.Variable(train[:,self.conf['question_len']+self.conf['answer_len']:]).cuda()
-                else:
-                    batch_question = autograd.Variable(train[:,:self.conf['question_len']])
-                    batch_good_answer = autograd.Variable(train[:,self.conf['question_len']:self.conf['question_len']+self.conf['answer_len']])
-                    batch_bad_answer = autograd.Variable(train[:,self.conf['question_len']+self.conf['answer_len']:])
+
+                batch_question = autograd.Variable(train[:,:self.conf['question_len']]).cuda()
+                batch_good_answer = autograd.Variable(train[:,self.conf['question_len']:self.conf['question_len']+self.conf['answer_len']]).cuda()
+                batch_bad_answer = autograd.Variable(train[:,self.conf['question_len']+self.conf['answer_len']:]).cuda()
                 optimizer.zero_grad()
 		self.model.hidden = self.model.init_hidden(len(train))
 		loss, acc = self.model.fit(batch_question, batch_good_answer, batch_bad_answer)
@@ -170,6 +158,7 @@ class Evaluate():
     def validate(self):
         #self.model.load_state_dict(torch.load("saved_model/answer_selection_model"))
         self.model = torch.load("saved_model/answer_selection_model")
+        #self.model.cuda()
         self.model.eval()
         eval_datasets = self.get_eval_sets()
         for name, dataset in eval_datasets.iteritems():
@@ -193,7 +182,6 @@ conf = {
     'hidden_dim':256,
     'learning_rate':0.005,
     'margin':0.05,
-    'gpu':1,
     'mode':'test'
 }
 ev = Evaluate(conf)
