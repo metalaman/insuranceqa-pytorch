@@ -96,9 +96,11 @@ class Evaluate():
         self.all_answers = self.load('answers')
         self.vocab = self.load('vocabulary')
         self.conf['vocab_size'] = len(self.vocab) + 1
-        self.model = AnswerSelection(self.conf)
-        if conf['gpu']:
-	           self.model.cuda()
+	if conf['mode'] == 'train':
+	    self.model = AnswerSelection(self.conf)
+	    self.model.train()
+	if conf['mode'] == 'test':
+	    self.validate()
 
     def load(self, name):
         return pickle.load(open('insurance_qa_python/'+name))
@@ -165,7 +167,7 @@ class Evaluate():
     def get_eval_sets(self):
         return dict([(s, self.load(s)) for s in ['dev', 'test1', 'test2']])
 
-    def evaluate(self):
+    def validate(self):
         #self.model.load_state_dict(torch.load("saved_model/answer_selection_model"))
         self.model = torch.load("saved_model/answer_selection_model")
         self.model.eval()
@@ -174,8 +176,8 @@ class Evaluate():
             print "Now evaluating : " + name
             for i, d in enumerate(dataset):
                 indices = d['good'] + d['bad']
-                answers = self.pad_answer([self.all_answers[i] for i in indices])
-                question = self.pad_question([d['question']]*len(indices))
+                answers = autograd.Variable(torch.LongTensor(self.pad_answer([self.all_answers[i] for i in indices]))).cuda()
+                question = autograd.Variable(torch.LongTensor(self.pad_question([d['question']]*len(indices)))).cuda()
 		print question.size(), answers.size()
                 similarity = self.model.forward(question,answers)
                 print similarity.size()
@@ -191,8 +193,8 @@ conf = {
     'hidden_dim':256,
     'learning_rate':0.005,
     'margin':0.05,
-    'gpu':1
+    'gpu':1,
+    'mode':'test'
 }
 ev = Evaluate(conf)
-#ev.train()
 ev.evaluate()
