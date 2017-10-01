@@ -39,10 +39,12 @@ class AnswerSelection(nn.Module):
     def forward(self, question, answer):
         question_embedding = self.word_embeddings(question)
         answer_embedding = self.word_embeddings(answer)
-        q_lstm, self.hidden = self.lstm(question_embedding, self.hidden)
-        a_lstm, self.hidden = self.lstm(answer_embedding, self.hidden)
-	q_lstm = q_lstm.contiguous()
-	a_lstm = a_lstm.contiguous()
+        #q_lstm, self.hidden = self.lstm(question_embedding, self.hidden)
+        #a_lstm, self.hidden = self.lstm(answer_embedding, self.hidden)
+	#q_lstm = q_lstm.contiguous()
+	#a_lstm = a_lstm.contiguous()
+        q_lstm = question_embedding
+        a_lstm = answer_embedding
         q_lstm = q_lstm.view(-1,self.hidden_dim, self.question_len)
         a_lstm = a_lstm.view(-1,self.hidden_dim, self.answer_len)
 
@@ -159,7 +161,7 @@ class Evaluate():
 
     def get_eval_sets(self, validation=False):
 	if validation:
-	    return dict([(s, self.load(s)) for s in ['dev']])	
+	    return dict([(s, self.load(s)) for s in ['dev']])
         return dict([(s, self.load(s)) for s in ['test1', 'test2']])
 
     def validate(self, validation=False):
