@@ -1,6 +1,7 @@
 import pickle
 import random
 import numpy as np
+from scipy.stats import rankdata
 import torch
 import torch.autograd as autograd
 import torch.utils.data as data
@@ -88,10 +89,12 @@ class Evaluate():
         self.vocab = self.load('vocabulary')
         self.conf['vocab_size'] = len(self.vocab) + 1
 	if conf['mode'] == 'train':
+	    print "Training"
 	    self.model = AnswerSelection(self.conf)
-        self.model.cuda()
-	    self.model.train()
+            self.model.cuda()
+	    self.train()
 	if conf['mode'] == 'test':
+	    print "Testing"
 	    self.validate()
 
     def load(self, name):
@@ -151,27 +154,41 @@ class Evaluate():
 
 	    print "Epoch: {0} Epoch Average loss: {1} Accuracy {2}".format(str(i), str(np.mean(avg_loss)), str(np.mean(avg_acc)))
             torch.save(self.model.state_dict(), "saved_model/answer_selection_model")
+	    if i % 50 == 0 and i > 0:
+		self.validate(validation=True)
 
-    def get_eval_sets(self):
-        return dict([(s, self.load(s)) for s in ['dev', 'test1', 'test2']])
+    def get_eval_sets(self, validation=False):
+	if validation:
+	    return dict([(s, self.load(s)) for s in ['dev']])	
+        return dict([(s, self.load(s)) for s in ['test1', 'test2']])
 
-    def validate(self):
-        #self.model.load_state_dict(torch.load("saved_model/answer_selection_model"))
-        self.model = torch.load("saved_model/answer_selection_model")
-        #self.model.cuda()
+    def validate(self, validation=False):
+        self.model.load_state_dict(torch.load("saved_model/answer_selection_model"))
+        #self.model = torch.load("saved_model/answer_selection_model")
         self.model.eval()
-        eval_datasets = self.get_eval_sets()
+	self.model.lstm.flatten_parameters()
+        eval_datasets = self.get_eval_sets(validation)
         for name, dataset in eval_datasets.iteritems():
             print "Now evaluating : " + name
+	    c_1, c_2 = 0, 0
             for i, d in enumerate(dataset):
+		if i%10 == 0:
+		    print "Progress : {0:.2f}%".format(float(i)/len(dataset)*100),"\r",
                 indices = d['good'] + d['bad']
                 answers = autograd.Variable(torch.LongTensor(self.pad_answer([self.all_answers[i] for i in indices]))).cuda()
                 question = autograd.Variable(torch.LongTensor(self.pad_question([d['question']]*len(indices)))).cuda()
-		print question.size(), answers.size()
+		self.model.hidden = self.model.init_hidden(question.size()[0])
                 similarity = self.model.forward(question,answers)
-                print similarity.size()
-                break
-            break
+		similarity = similarity.cpu().data.numpy()
+		max_r = np.argmax(similarity)
+                max_n = np.argmax(similarity[:len(d['good'])])
+		r = rankdata(similarity, method='max')
+		c_1 += 1 if max_r == max_n else 0
+		c_2 += 1 / float(r[max_r] - r[max_n] + 1)
+	    top1 = c_1 / float(len(dataset))
+	    mrr = c_2 / float(len(dataset))
+	    print('Top-1 Precision: %f' % top1)
+            print('MRR: %f' % mrr)
 
 conf = {
     'question_len':20,
@@ -182,7 +199,6 @@ conf = {
     'hidden_dim':256,
     'learning_rate':0.005,
     'margin':0.05,
-    'mode':'test'
+    'mode':'train'
 }
 ev = Evaluate(conf)
-ev.evaluate()
