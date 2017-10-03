@@ -26,7 +26,8 @@ class AnswerSelection(nn.Module):
         self.answer_maxpool = nn.MaxPool1d(self.answer_len, stride=1)
         self.dropout = nn.Dropout(p=0.2)
 	self.init_weights()
-	self.hidden = self.init_hidden(self.batch_size)
+	self.hiddenq = self.init_hidden(self.batch_size)
+	self.hiddena = self.init_hidden(self.batch_size)
 
     def init_hidden(self, batch_len):
         return (autograd.Variable(torch.randn(2, batch_len, self.hidden_dim // 2)).cuda(),
@@ -39,10 +40,10 @@ class AnswerSelection(nn.Module):
     def forward(self, question, answer):
         question_embedding = self.word_embeddings(question)
         answer_embedding = self.word_embeddings(answer)
-        #q_lstm, self.hidden = self.lstm(question_embedding, self.hidden)
-        #a_lstm, self.hidden = self.lstm(answer_embedding, self.hidden)
-	#q_lstm = q_lstm.contiguous()
-	#a_lstm = a_lstm.contiguous()
+        q_lstm, self.hiddenq = self.lstm(question_embedding, self.hiddenq)
+        a_lstm, self.hiddena = self.lstm(answer_embedding, self.hiddena)
+	q_lstm = q_lstm.contiguous()
+	a_lstm = a_lstm.contiguous()
         q_lstm = question_embedding
         a_lstm = answer_embedding
         q_lstm = q_lstm.view(-1,self.hidden_dim, self.question_len)
@@ -93,10 +94,13 @@ class Evaluate():
 	if conf['mode'] == 'train':
 	    print "Training"
 	    self.model = AnswerSelection(self.conf)
+	    if conf['resume']:
+		self.model.load_state_dict(torch.load("saved_model/answer_selection_model_cnnlstm"))
             self.model.cuda()
 	    self.train()
 	if conf['mode'] == 'test':
 	    print "Testing"
+	    self.model = AnswerSelection(self.conf)
 	    self.validate()
 
     def load(self, name):
@@ -123,7 +127,7 @@ class Evaluate():
         batch_size = self.conf['batch_size']
         epochs = self.conf['epochs']
         training_set = self.load('train')
-
+	
         questions = list()
         good_answers = list()
         for i, q in enumerate(training_set):
@@ -146,7 +150,8 @@ class Evaluate():
                 batch_good_answer = autograd.Variable(train[:,self.conf['question_len']:self.conf['question_len']+self.conf['answer_len']]).cuda()
                 batch_bad_answer = autograd.Variable(train[:,self.conf['question_len']+self.conf['answer_len']:]).cuda()
                 optimizer.zero_grad()
-		self.model.hidden = self.model.init_hidden(len(train))
+		self.model.hiddenq = self.model.init_hidden(len(train))
+		self.model.hiddena = self.model.init_hidden(len(train))
 		loss, acc = self.model.fit(batch_question, batch_good_answer, batch_bad_answer)
 		avg_loss.append(loss.data[0])
 		avg_acc.append(acc)
@@ -155,7 +160,7 @@ class Evaluate():
                 optimizer.step()
 
 	    print "Epoch: {0} Epoch Average loss: {1} Accuracy {2}".format(str(i), str(np.mean(avg_loss)), str(np.mean(avg_acc)))
-            torch.save(self.model.state_dict(), "saved_model/answer_selection_model")
+            torch.save(self.model.state_dict(), "saved_model/answer_selection_model_cnnlstm")
 	    if i % 50 == 0 and i > 0:
 		self.validate(validation=True)
 
@@ -165,8 +170,9 @@ class Evaluate():
         return dict([(s, self.load(s)) for s in ['test1', 'test2']])
 
     def validate(self, validation=False):
-        self.model.load_state_dict(torch.load("saved_model/answer_selection_model"))
+        self.model.load_state_dict(torch.load("saved_model/answer_selection_model_cnnlstm"))
         #self.model = torch.load("saved_model/answer_selection_model")
+	self.model.cuda()
         self.model.eval()
 	self.model.lstm.flatten_parameters()
         eval_datasets = self.get_eval_sets(validation)
@@ -179,7 +185,8 @@ class Evaluate():
                 indices = d['good'] + d['bad']
                 answers = autograd.Variable(torch.LongTensor(self.pad_answer([self.all_answers[i] for i in indices]))).cuda()
                 question = autograd.Variable(torch.LongTensor(self.pad_question([d['question']]*len(indices)))).cuda()
-		self.model.hidden = self.model.init_hidden(question.size()[0])
+		self.model.hiddena = self.model.init_hidden(answers.size()[0])
+		self.model.hiddenq = self.model.init_hidden(question.size()[0])
                 similarity = self.model.forward(question,answers)
 		similarity = similarity.cpu().data.numpy()
 		max_r = np.argmax(similarity)
@@ -201,6 +208,7 @@ conf = {
     'hidden_dim':256,
     'learning_rate':0.005,
     'margin':0.05,
-    'mode':'train'
+    'mode':'train',
+    'resume':1
 }
 ev = Evaluate(conf)
