@@ -127,7 +127,7 @@ class Evaluate():
         batch_size = self.conf['batch_size']
         epochs = self.conf['epochs']
         training_set = self.load('train')
-	
+
         questions = list()
         good_answers = list()
         for i, q in enumerate(training_set):
@@ -173,11 +173,26 @@ class Evaluate():
         self.model.load_state_dict(torch.load("saved_model/answer_selection_model_cnnlstm"))
         #self.model = torch.load("saved_model/answer_selection_model")
 	self.model.cuda()
-        self.model.eval()
 	self.model.lstm.flatten_parameters()
         eval_datasets = self.get_eval_sets(validation)
         for name, dataset in eval_datasets.iteritems():
             print "Now evaluating : " + name
+            question = []
+            answers = []
+            self.model.eval()
+            for i, d in enumerate(dataset):
+                indices = d['good'] + d['bad']
+                answers.append(autograd.Variable(torch.LongTensor(self.pad_answer([self.all_answers[i] for i in indices]))).cuda())
+                question.append(autograd.Variable(torch.LongTensor(self.pad_question([d['question']]*len(indices)))).cuda())
+            test_loader = data.DataLoader(dataset=torch.cat([questions,answers],dim=1), batch_size=self.conf['batch_size'])
+            for step, test in enumerate(test_loader):
+                print test.size()
+                raw_input()
+
+
+        '''
+        Doesn't Work -- Maybe -- from Keras implementation
+
 	    c_1, c_2 = 0, 0
             for i, d in enumerate(dataset):
 		if i%10 == 0:
@@ -198,6 +213,7 @@ class Evaluate():
 	    mrr = c_2 / float(len(dataset))
 	    print('Top-1 Precision: %f' % top1)
             print('MRR: %f' % mrr)
+        '''
 
 conf = {
     'question_len':20,
