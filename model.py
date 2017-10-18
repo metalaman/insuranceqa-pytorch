@@ -176,22 +176,34 @@ class Evaluate():
 	self.model.lstm.flatten_parameters()
         eval_datasets = self.get_eval_sets(validation)
         for name, dataset in eval_datasets.iteritems():
+	    #index = 0 
+	    #score_list = []
             print "Now evaluating : " + name
-            question = []
-            answers = []
+            #questions = list()
+            #answers = list()
             self.model.eval()
+	    '''
             for i, d in enumerate(dataset):
                 indices = d['good'] + d['bad']
-                answers.append(autograd.Variable(torch.LongTensor(self.pad_answer([self.all_answers[i] for i in indices]))).cuda())
-                question.append(autograd.Variable(torch.LongTensor(self.pad_question([d['question']]*len(indices)))).cuda())
-            test_loader = data.DataLoader(dataset=torch.cat([questions,answers],dim=1), batch_size=self.conf['batch_size'])
+                answers += [self.all_answers[i] for i in indices]
+                questions += [d['question']]*len(indices)
+	    
+	    questions = torch.LongTensor(self.pad_question(questions))
+	    answers = torch.LongTensor(self.pad_answer(answers))
+            test_loader = data.DataLoader(dataset=torch.cat([questions,answers],dim=1), batch_size=self.conf['batch_size'], shuffle=True)
             for step, test in enumerate(test_loader):
-                print test.size()
-                raw_input()
+		batch_question = autograd.Variable(test[:,:self.conf['question_len']]).cuda()
+                batch_answer = autograd.Variable(test[:,self.conf['question_len']:]).cuda()
+		self.model.hiddena = self.model.init_hidden(batch_answer.size()[0])
+                self.model.hiddenq = self.model.init_hidden(batch_question.size()[0])
+		similarity = self.model.forward(question,answers)
+		score_list.append(similarity.cpu.data.numpy())
+               	
+	    sdict = {}
+	    
 
-
-        '''
-        Doesn't Work -- Maybe -- from Keras implementation
+            '''
+            #Doesn't Work -- Maybe -- from Keras implementation
 
 	    c_1, c_2 = 0, 0
             for i, d in enumerate(dataset):
@@ -200,8 +212,8 @@ class Evaluate():
                 indices = d['good'] + d['bad']
                 answers = autograd.Variable(torch.LongTensor(self.pad_answer([self.all_answers[i] for i in indices]))).cuda()
                 question = autograd.Variable(torch.LongTensor(self.pad_question([d['question']]*len(indices)))).cuda()
-		self.model.hiddena = self.model.init_hidden(answers.size()[0])
-		self.model.hiddenq = self.model.init_hidden(question.size()[0])
+		#self.model.hiddena = self.model.init_hidden(answers.size()[0])
+		#self.model.hiddenq = self.model.init_hidden(question.size()[0])
                 similarity = self.model.forward(question,answers)
 		similarity = similarity.cpu().data.numpy()
 		max_r = np.argmax(similarity)
@@ -213,7 +225,7 @@ class Evaluate():
 	    mrr = c_2 / float(len(dataset))
 	    print('Top-1 Precision: %f' % top1)
             print('MRR: %f' % mrr)
-        '''
+        
 
 conf = {
     'question_len':20,
@@ -224,7 +236,7 @@ conf = {
     'hidden_dim':256,
     'learning_rate':0.005,
     'margin':0.05,
-    'mode':'train',
+    'mode':'test',
     'resume':1
 }
 ev = Evaluate(conf)
