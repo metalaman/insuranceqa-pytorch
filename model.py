@@ -212,8 +212,8 @@ class Evaluate():
                 indices = d['good'] + d['bad']
                 answers = autograd.Variable(torch.LongTensor(self.pad_answer([self.all_answers[i] for i in indices]))).cuda()
                 question = autograd.Variable(torch.LongTensor(self.pad_question([d['question']]*len(indices)))).cuda()
-		#self.model.hiddena = self.model.init_hidden(answers.size()[0])
-		#self.model.hiddenq = self.model.init_hidden(question.size()[0])
+		self.model.hiddena = self.model.init_hidden(answers.size()[0])
+		self.model.hiddenq = self.model.init_hidden(question.size()[0])
                 similarity = self.model.forward(question,answers)
 		similarity = similarity.cpu().data.numpy()
 		max_r = np.argmax(similarity)
@@ -232,9 +232,9 @@ conf = {
     'answer_len':150,
     'batch_size':256,
     'epochs':10000,
-    'embedding_dim':256,
-    'hidden_dim':256,
-    'learning_rate':0.005,
+    'embedding_dim':512,
+    'hidden_dim':512,
+    'learning_rate':0.01,
     'margin':0.05,
     'mode':'test',
     'resume':1
