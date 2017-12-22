@@ -1,5 +1,5 @@
 # insuranceqa-pytorch
-Partial Implementation of LSTM based Deep Learning Models for Non-Factoid Answer Selection by Ming et al.
+Implementation of LSTM based Deep Learning Models for Non-Factoid Answer Selection by Ming et al.
 
 TODO:
 1) Implement attention.
